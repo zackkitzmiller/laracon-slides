@@ -1,0 +1,610 @@
+<!doctype html>
+<!--[if lt ie 7]> <html class="no-js ie6" lang="en"> <![endif]-->
+<!--[if ie 7]>    <html class="no-js ie7" lang="en"> <![endif]-->
+<!--[if ie 8]>    <html class="no-js ie8" lang="en"> <![endif]-->
+<!--[if gt ie 8]><!-->  <html class="no-js" lang="en"> <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="x-ua-compatible" content="ie=edge,chrome=1">
+
+  <title>background jobs</title>
+
+  <!-- core and extension css files -->
+  <link rel="stylesheet" href="assets/core/deck.core.css">
+  <link rel="stylesheet" href="assets/extensions/goto/deck.goto.css">
+  <link rel="stylesheet" href="assets/extensions/menu/deck.menu.css">
+  <link rel="stylesheet" href="assets/extensions/status/deck.status.css">
+  <link rel="stylesheet" href="assets/extensions/hash/deck.hash.css">
+
+  <!-- theme css files (menu swaps these out) -->
+  <link rel="stylesheet" id="style-theme-link" href="assets/themes/style/neon.css">
+  <link rel="stylesheet" id="transition-theme-link" href="assets/themes/transition/fade.css">
+
+  <script src="assets/modernizr.custom.js"></script>
+</head>
+
+<body class="deck-container">
+
+<section class="slide" id="title-slide">
+  <h1>procrastinating code</h1>
+  <h3>by zack kitzmiller</h3>
+</section>
+
+<section class="slide" id="who-am-i">
+  <h2>who am i?</h2>
+
+  <div class="slide">
+    <h3>work</h3>
+    <ul>
+      <li>seatgeek</li>
+      <li>forrst</li>
+      <li>streak.ly</li>
+    </ul>
+  </div>
+
+  <div class="slide">
+    <h3>open source contributions</h3>
+    <ul>
+      <li>sixpack (please, talk to me about this)</li>
+      <li>holmes</li>
+      <li>various frameworks (codeigniter, fuelphp, flask)</li>
+      <li>postmark php &amp; codeigniter wrappers</li>
+      <li>stripe php wrapper</li>
+      <li>pusher php library</li>
+      <li>various jquery plugins</li>
+    </ul>
+  </div>
+
+</section>
+
+<section class="slide">
+  <h2>stuff your app probably does</h2>
+  <ul>
+    <li class="slide">db calls</li>
+    <li class="slide">session handling</li>
+    <li class="slide">image processing</li>
+    <li class="slide">api calls</li>
+    <li class="slide">analytics</li>
+    <li class="slide">sending email</li>
+    <li class="slide">show forms</li>
+    <li class="slide">html formatting</li>
+    <li class="slide">form validation</li>
+    <li class="slide">templating</li>
+    <li class="slide">caching</li>
+    <li class="slide">building reports</li>
+    <li class="slide">(internal)api responses</li>
+    <li class="slide">friending people</li>
+    <li class="slide">checking in to places</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>how many of these break or are slow?</h2>
+  <p class="slide">most of them</p>
+
+  <h3 class="slide">we do way too much inline</h3>
+
+</section>
+
+<section class="slide">
+
+  <h2>image processing</h2>
+  <ul>
+    <li class="slide">kapture
+      <ul>
+        <li>checkin with a photograph</li>
+        <li>resize</li>
+        <li>watermark</li>
+        <li>upload to s3</li>
+      </ul>
+    </li>
+  </ul>
+
+  <p class="slide">this process took over a minute</p>
+</section>
+
+
+<section class="slide">
+
+  <h2>things that break</h2>
+  <ul>
+      <li class="slide">slow api calls</li>
+      <li class="slide">purchase workflows
+        <ul>
+          <li>authorize card</li>
+          <li>ensure the product is available</li>
+          <li>ensure correct $</li>
+          <li>charge card</li>
+        </ul>
+      </li>
+      <li class="slide">sending emails</li>
+    </li>
+  </ul>
+
+  <h3 class="slide">the user shouldn't have to wait for this.</h3>
+</section>
+
+<section class="slide">
+  <h2>things that suck/bug prone</h2>
+  <ul>
+    <li>soap interfaces</li>
+    <li>other people's code</li>
+  </ul>
+</section>
+
+
+<section class="slide">
+
+  <h2>expensive like gucci</h3>
+
+  <p class="slide">expensive processes don't only effect the current user, they effect all users</p>
+
+  <ul>
+    <li class="slide">deleting things</li>
+    <li class="slide">complexity: bad</li>
+    <pre class="slide"><code>
+    public function before_delete()
+    {
+        set_time_limit(0);
+
+        $this->after_find();
+
+        $_data['title']       = $this->title;
+        $_data['description'] = $this->description;
+        $_data['content']     = $this->content;
+
+        if (user::$current)
+        {
+        $a = new audit(
+          array(
+            'action'     => 'delete',
+            'context'    => 'post',
+            'context_id' => $this->id,
+            'user_id'    => user::$current->id,
+            'data'       => serialize($_data)
+          )
+        );
+
+        $a->save();
+        }
+
+        // remove post from promo queue
+        $pr = promorequest()->find_one_by(array('post_id' => $this->id));
+
+        if ($pr !== false)
+        {
+          if ($pr->approved_at === null)
+          {
+            $acorn_count = $this->user->acorn_count + $pr->acorns;
+            $this->user->update_attr('acorn_count', $acorn_count);
+          }
+          $pr->delete();
+        }
+
+        $ids = $this->activity_for_post(true);
+        if (count($ids))
+        {
+          db::query('delete from activities where id in ('.join(',', $ids).') limit '. count($ids));
+        }
+
+        // any posts that were in reply to this post need to have that cleared
+        db::query('update posts set in_reply_to_post_id = :null
+                   where in_reply_to_post_id = ?', array($this->id));
+
+        // also clear posts where original_post_id is set to ours
+        db::query('update posts set original_post_id = :null
+                   where original_post_id = ?', array($this->id));
+
+        // remove activities for this post
+        db::query('delete from activities
+                   where context = "post" and context_id = ?', array($this->id));
+
+        // remove glues related to this post
+        db::query('delete from glues
+                   where context = "like" and context_id = ?', array($this->id));
+
+        // remove flags
+        db::query('delete from flags
+                   where context = "post" and context_id = ?', array($this->id));
+
+        // remove comments
+        $comments = comment()->find_by_post_id($this->id);
+        if (count($comments))
+        {
+            foreach ($comments as $comment)
+            {
+                $comment->delete();
+            }
+        }
+
+        // remove taggings
+        db::query('delete from taggings
+                   where taggable_type = "post" and taggable_id = ?', array($this->id));
+
+        $redis = magnus::get_redis();
+        // cache killers
+        $redis->del(
+            activity()->count_for_user_id($this->user_id, 'new_post', true)
+        );
+        $redis->del($this->user->draft_count(true));
+    }
+
+    </pre></code>
+
+    <p>user was much worse</p>
+  </ul>
+
+</section>
+
+
+<section class="slide">
+
+  <h2>expensive like gucci</h3>
+
+  <h3>seatgeek deal score</h3>
+
+  <ul>
+    <li class="slide">calculations</li>
+
+      <iframe class="slide" src="http://seatgeek.com/justin-bieber-tickets/washington-district-of-columbia-verizon-center-2013-08-03-7-pm/concert/1268946/" style="height:100%; width: 100%;"></iframe>
+
+  </ul>
+
+</section>
+
+<section class="slide">
+
+  <h2>expensive like gucci</h2>
+
+  <p>for.. 10s of 1000s of tickets
+
+  <ul>
+    <li>calculate average price</li>
+    <li>find highest price</li>
+    <li>find lowset price</li>
+    <li>update available listings for next page load</li>
+    <li>save scores/stats in api in real-time</li>
+  </ul>
+
+  <img src="/laracon-bg-jobs/assets/images/api.png" />
+
+</section>
+
+<section class="slide">
+
+  <h2>expensive like gucci</h2>
+
+  <h4>other expensive operations</h4>
+  <ul>
+    <li>backups</li>
+    <li>report building</li>
+    <li>analytics</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>great, what do we do about it?</h2>
+</section>
+
+<section class="slide">
+  <h3 style="font-size:200px; text-align:center">background jobs!</h3>
+</section>
+
+<section class="slide">
+  <h2>the basics</h2>
+  <img class="slide" src="/laracon-bg-jobs/assets/images/model.png">
+
+  <ul>
+    <li>lock all the things..</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>vocab!!!!</h2>
+
+  <p class="slide">a few things</p>
+
+  <ul class="slide">
+    <li>priority</li>
+    <li>ready</li>
+    <li>reserved</li>
+    <li>delayed</li>
+    <li>tubes</li>
+    <li>buried</li>
+  </ul>
+
+</section>
+
+<section class="slide">
+  <h2>anatomy of a queue flow</h2>
+  <ul>
+    <li class="slide">producer
+      <ul>
+        <li>simple api</li>
+        <li>light</li>
+        <li>probably shoudl lock.. multiple emails</li>
+      </ul>
+    </li>
+    <li class="slide">queue
+      <ul>
+        <li>the meat.</li>
+        <li>should probably lock</li>
+        <li>maybe be in charge of distributing</li>
+      </ul>
+    </li>
+    <li class="slide">workers
+      <ul>
+        <li>reserve jobs from the queue</li>
+        <li>needs god/supervisor/something else</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section class="slide">
+
+<h2>queues(ish)</h2>
+
+  <h3>mysql</h3>
+
+  <ul class="slide">
+    <li>sort of ok.</li>
+    <li>throw a row in a table, use cron, etc</li>
+  </ul>
+
+  <div class="slide">
+    <h4>pros</h4>
+    <ul>
+      <li>built in</li>
+      <li>no barrier to entry</li>
+    </ul>
+  </div>
+
+  <div class="slide">
+    <h4>cons</h4>
+    <ul>
+      <li>slow - use your db for db</li>
+      <li>hard to solve the locking problem</li>
+    </ul>
+  </div>
+
+  <p class="slide">there are better tools for this job</p>
+
+</section>
+
+<section class="slide">
+<h2>queues(ish)</h2>
+
+  <h3>redis - lists</h3>
+
+  <ul class="slide">
+    <li>hawt</li>
+  </ul>
+
+  <div class="slide">
+    <h4>pros</h4>
+    <ul>
+      <li>fast</li>
+      <li>easy api</li>
+      <li>(should be) free</li>
+    </ul>
+  </div>
+
+  <div class="slide">
+    <h4>cons</h4>
+    <ul>
+      <li>not always free</li>
+      <li>redis persistance - always an issue</li>
+    </ul>
+  </div>
+
+  <p class="slide">again, there are better tools for this job</p>
+
+</section>
+
+<section class="slide">
+<h2>queues(ish)</h2>
+
+  <h3>redis - pub/sub</h3>
+
+  <p>pubsub?</p>
+
+  <ul class="slide">
+    <li>fast</li>
+    <li>more of a message queue/message bus</li>
+  </ul>
+
+  <div class="slide">
+    <h4>pros</h4>
+    <ul>
+      <li>multiple listeners for the same job</li>
+      <li>easy api</li>
+      <li>(should be) free</li>
+    </ul>
+  </div>
+
+  <div class="slide">
+    <h4>cons</h4>
+    <ul>
+      <li>no persistance - at all</li>
+      <li>hard-ish to debug</li>
+    </ul>
+  </div>
+
+  <p class="slide">again, there are better tools for this job</p>
+
+</section>
+
+<section class="slide">
+  <h2>queues</h2>
+
+  <h3>rabbitmq</h3>
+
+  <p>swiss-army of queues</p>
+
+
+  <div class="slide">
+    <h4>pros</h4>
+    <ul>
+      <li>popular?</li>
+      <li>documentation</li>
+      <li>can have great persistance</li>
+      <li>fan-out</li>
+      <li>scales really well</li>
+    </ul>
+  </div>
+
+  <div class="slide">
+    <h4>cons</h4>
+    <ul>
+      <li>lots of configuration</li>
+      <li>requires erlang</li>
+      <li>ops can be an issue</li>
+      <li>more work to get producers/workers running</li>
+    </ul>
+  </div>
+
+  <p class="slide">good tool, can be heavy handed</p>
+
+</section>
+
+
+<section class="slide">
+  <h2>queues</h2>
+
+  <h3>gearman</h3>
+
+  <div class="slide">
+    <h4>pros</h4>
+    <ul>
+      <li>very simple</li>
+      <li>single channel</li>
+      <li>great client-library support</li>
+      <li>presistance with mysql or redis</li>
+    </ul>
+  </div>
+
+  <div class="slide">
+    <h4>cons</h4>
+    <ul>
+      <li>requires mysql/redis for persistance</li>
+      <li>needs php extension</li>
+    </ul>
+  </div>
+
+  <p class="slide">good, reasonable option</p>
+
+</section>
+
+
+
+<section class="slide">
+  <h2>queues</h2>
+
+  <h3>reqsue</h3>
+
+  <div class="slide">
+    <h4>pros</h4>
+    <ul>
+      <li>built-in dashboard</li>
+      <li>fast</li>
+      <li>persistant</li>
+    </ul>
+  </div>
+
+  <div class="slide">
+    <h4>cons</h4>
+    <ul>
+      <li>requires redis</li>
+      <li>relatively ruby specific</li>
+      <li>written in ruby</li>
+      <li>forks all over the place</li>
+    </ul>
+  </div>
+
+  <p class="slide">good, reasonable option</p>
+
+</section>
+
+<section class="slide">
+  <h2>queues</h2>
+
+  <h3>beanstalkd</h3>
+
+  <div class="slide">
+    <h4>pros</h4>
+    <ul>
+      <li>very simple</li>
+      <li>multiple tubes </li>
+      <li>intuitive</li>
+      <li>has one job</li>
+    </ul>
+  </div>
+
+  <div class="slide">
+    <h4>cons</h4>
+    <ul>
+      <li>no dashboard (built in)</li>
+      <li>no persistance</li>
+    </ul>
+  </div>
+
+  <p class="slide">good, reasonable option</p>
+
+</section>
+
+
+<section class="slide">
+  <h2>advanced things</h2>
+
+  <ul class="slide">
+    <li>scale with workers</li>
+    <li>scale with servers</li>
+  </ul>
+</section>
+
+<section class="slide">
+
+  <h2>a couple best practices</h2>
+
+  <ul>
+    <li class="slide">small messages</li>
+    <li class="slide">json</li>
+
+    <li class="slide">pk</li>
+  </ul>
+
+  <img src="/laracon-bg-jobs/assets/images/bad-taylor.png" class="slide">
+</section>
+
+
+<section class="slide">
+
+  <h2>examples</h2>
+
+</section>
+
+<section class="slide">
+  <h2>that's all</h2>
+
+  <h3>questions?</h3>
+</section>
+
+
+
+  <!-- grab cdn jquery, with a protocol relative url; fall back to local if offline -->
+  <script src="//ajax.aspnetcdn.com/ajax/jquery/jquery-1.7.min.js"></script>
+  <script>window.jquery || document.write('<script src="assets/jquery-1.7.min.js"><\/script>')</script>
+
+<!-- deck core and extensions -->
+<script src="assets/core/deck.core.js"></script>
+<script src="assets/extensions/hash/deck.hash.js"></script>
+<script src="assets/extensions/menu/deck.menu.js"></script>
+<script src="assets/extensions/goto/deck.goto.js"></script>
+<script src="assets/extensions/status/deck.status.js"></script>
+
+<!-- specific to this page -->
+<script src="introduction.js"></script>
+
+</body>
+</html>
